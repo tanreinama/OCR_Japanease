@@ -27,7 +27,7 @@ def main():
         if os.path.isfile(f):
             d.append(f)
         elif os.path.isdir(f):
-            d.extend(os.listdir(f))
+            d.extend([f+'/'+a for a in os.listdir(f)])
         else:
             print('Input file "%s" in not file or directory.'%file)
             return
