@@ -84,7 +84,7 @@ file "testshot1.png" detected in 72 dpi
 [Block #1]
 日本
 [Block #2]
-コロナウィルスにまけるな
+コロナウイルスにまけるな
 ```
 
 
