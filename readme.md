@@ -59,7 +59,7 @@ $ git clone https://github.com/tanreinama/OCR_Japanease.git
 
 
 
-### **学習済みをダウンロード**
+### **学習済みモデルをダウンロード**
 
 
 
