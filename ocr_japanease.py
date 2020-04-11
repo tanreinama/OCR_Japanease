@@ -62,7 +62,10 @@ def get_ocr(filelist,dpi,suffix='default',use_cuda=True,output_detect_img=False)
             print('Input file "%s" not found.'%file)
             return
     model = get_detectionnet(False, True)
-    model.load_state_dict(torch.load(det_model))
+    if use_cuda:
+        model.load_state_dict(torch.load(det_model))
+    else:
+        model.load_state_dict(torch.load(det_model, map_location=torch.device('cpu')))
     dt = Detector(use_cuda=use_cuda)
     detections = []
     for file in filelist:
@@ -80,7 +83,10 @@ def get_ocr(filelist,dpi,suffix='default',use_cuda=True,output_detect_img=False)
     del model
     torch.cuda.empty_cache()
     model = get_classifiernet(len(nihongo_class) + 2)
-    model.load_state_dict(torch.load(cls_model))
+    if use_cuda:
+        model.load_state_dict(torch.load(cls_model))
+    else:
+        model.load_state_dict(torch.load(cls_model, map_location=torch.device('cpu')))
     boundings = []
     for d in detections:
         b = dt.bounding_box(model, d)
