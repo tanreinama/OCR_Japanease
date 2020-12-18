@@ -6,6 +6,8 @@
 
 OCRそのものです。画像を入力して、文字を認識するプログラムです。[詳しい解説](https://qiita.com/tanreinama/items/8fc1c8af6554654aae00)
 
+このプロジェクトは、[スポンサーを募集しています](report/sponsor.md)。
+
 
 
 ![OCR概要](readme_img/catch.png)
