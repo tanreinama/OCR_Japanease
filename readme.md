@@ -64,6 +64,7 @@ GitHubからクローンします。
 
 ```sh
 $ git clone https://github.com/tanreinama/OCR_Japanease.git
+$ cd OCR_Japanease
 ```
 
 
