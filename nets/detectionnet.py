@@ -1,108 +1,77 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
+from .block import Block
 
-from .block import Mish, SeparableConv2d, Block
+class UNet(nn.Module):
+    def __init__(self, n_blocks=[1,2,6,10,4], n_channels=[24,32,48,96,192,384]):
+        super(UNet, self).__init__()
 
-class HourglassNet(nn.Module):
-    def __init__(self, depth, channel):
-        super(HourglassNet, self).__init__()
-        self.depth = depth
-        hg = []
-        for _ in range(self.depth):
-            hg.append([
-                Block(channel,channel,3,1,activation=Mish()),
-                Block(channel,channel,2,2,activation=Mish()),
-                Block(channel,channel,3,1,activation=Mish())
-            ])
-        hg[0].append(Block(channel,channel,3,1,activation=Mish()))
-        hg = [nn.ModuleList(h) for h in hg]
-        self.hg = nn.ModuleList(hg)
+        backbone = []
+        in_channel = n_channels[0]
+        for i in range(len(n_blocks)):
+            channel = n_channels[i+1]
+            layers = [Block(in_channel,channel)]
+            for _ in range(n_blocks[i]-1):
+                layers.append(Block(channel,channel))
+            layers.append(Block(channel,channel,2))
+            in_channel = channel
+            backbone.append(nn.Sequential(*layers))
+        self.backbone = nn.ModuleList(backbone)
 
-    def _hour_glass_forward(self, n, x):
-        up1 = self.hg[n-1][0](x)
-        low1 = self.hg[n-1][1](up1)
+        upstep = [Block(n_channels[1], n_channels[0])]
+        for i in range(len(n_blocks)-1):
+            channel = n_channels[i+1]
+            upstep.append(Block(channel*2, channel))
+        self.upstep = nn.ModuleList(upstep)
 
-        if n > 1:
-            low2 = self._hour_glass_forward(n-1, low1)
-        else:
-            low2 = self.hg[n-1][3](low1)
-
-        low3 = self.hg[n-1][2](low2)
-        up2 = F.interpolate(low3, scale_factor=2)
-        out = up1 + up2
-        return out
+        downstep = []
+        out_channel = n_channels[0]
+        for i in range(len(n_blocks)):
+            channel = n_channels[i+1]
+            downstep.append(Block(channel, out_channel))
+            out_channel = channel
+        self.downstep = nn.ModuleList(downstep)
 
     def forward(self, x):
-        return self._hour_glass_forward(self.depth, x)
+        back_out = []
+        for i in range(len(self.backbone)):
+            x = self.backbone[i](x)
+            back_out.append(x)
 
-class XceptionHourglass(nn.Module):
-    def __init__(self, use_grid_offset=True, use_offset_pooling=False):
-        super(XceptionHourglass, self).__init__()
-        self.use_grid_offset = use_grid_offset
-        self.use_offset_pooling = use_offset_pooling
+        out = back_out[len(back_out)-1]
+        for i in range(len(back_out)-1):
+            low = self.downstep[len(self.downstep)-i-1](out)
+            up1 = F.interpolate(low, scale_factor=2)
+            up2 = back_out[len(back_out)-i-2]
+            up = torch.cat([up1,up2], dim=1)
+            out = self.upstep[len(self.upstep)-i-1](up)
+        return self.upstep[0](out)
 
-        self.conv1 = nn.Conv2d(1, 64, 3, 2, 1, bias=True)
-        self.bn1 = nn.BatchNorm2d(64)
-        self.mish = Mish()
 
-        self.conv2 = nn.Conv2d(64, 96, 3, 1, 1, bias=True)
-        self.bn2 = nn.BatchNorm2d(96)
+class DetectionNet(nn.Module):
+    def __init__(self):
+        super(DetectionNet, self).__init__()
 
-        self.head = Block(96,96,2,2)
+        self.conv1 = nn.Conv2d(1, 24, 3, 1, 1, bias=True)
+        self.block1 = UNet()
 
-        self.block1 = HourglassNet(3, 96)
-        self.bn3 = nn.BatchNorm2d(96)
-        self.block2 = HourglassNet(3, 96)
-
+        self.relu = nn.ReLU()
         self.sigmoid = nn.Sigmoid()
 
-        self.conv3_1 = nn.Conv2d(96, 1, 1, bias=True)
-        self.conv3_2 = nn.Conv2d(96, 1, 1, bias=True)
-        self.conv3_3 = nn.Conv2d(96, 2, 1, bias=True)
-        if self.use_grid_offset:
-            self.conv3_4 = nn.Conv2d(96, 2, 1, bias=True)
-        self.conv4_1 = nn.Conv2d(96, 1, 1, bias=True)
-        self.conv4_2 = nn.Conv2d(96, 1, 1, bias=True)
-        self.conv4_3 = nn.Conv2d(96, 2, 1, bias=True)
-        if self.use_grid_offset:
-            self.conv4_4 = nn.Conv2d(96, 2, 1, bias=True)
+        self.out1 = nn.Conv2d(24, 1, 1, bias=True)
+        self.out2 = nn.Conv2d(24, 1, 1, bias=True)
+        self.out3 = nn.Conv2d(24, 2, 1, bias=True)
 
     def forward(self, input):
         x = self.conv1(input)
-        x = self.bn1(x)
-        x = self.mish(x)
-
-        x = self.conv2(x)
-        x = self.bn2(x)
-        x = self.mish(x)
-
-        x = self.head(x)
-        out1 = self.block1(x)
-        x = self.bn3(out1)
-        x = self.mish(x)
-        out2 = self.block2(x)
-
-        out1 = self.mish(out1)
-        out2 = self.mish(out2)
-
-        out1_off = out1
-        out2_off = out2
-        if self.use_offset_pooling:
-            out1_off = F.avg_pool2d(out1, 2, 2)
-            out2_off = F.avg_pool2d(out2, 2, 2)
-
-        result = [{'hm_wd':self.sigmoid(self.conv3_1(out1)),
-                'hm_sent':self.sigmoid(self.conv3_2(out1)),
-                'of_size':self.sigmoid(self.conv3_3(out1_off))},
-                {'hm_wd':self.sigmoid(self.conv4_1(out2)),
-                'hm_sent':self.sigmoid(self.conv4_2(out2)),
-                'of_size':self.sigmoid(self.conv4_3(out2_off))}]
-        if self.use_grid_offset:
-            result[0]['of_grid'] = self.sigmoid(self.conv3_4(out1_off))
-            result[1]['of_grid'] = self.sigmoid(self.conv4_4(out2_off))
+        x = self.block1(x)
+        out = self.relu(x)
+        result = {'hm_wd':self.sigmoid(self.out1(out)),
+                'hm_sent':self.sigmoid(self.out2(out)),
+                'of_size':self.sigmoid(self.out3(out))}
         return result
 
-def get_detectionnet(use_grid_offset, use_offset_pooling):
-    model = XceptionHourglass(use_grid_offset, use_offset_pooling)
+def get_detectionnet():
+    model = DetectionNet()
     return model

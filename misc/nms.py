@@ -1,6 +1,6 @@
 import numpy as np
 
-def non_max_suppression(boxes, overlapThresh=0.3):
+def non_max_suppression(boxes, overlapThresh=0.2):
     if len(boxes) == 0:
         return []
 

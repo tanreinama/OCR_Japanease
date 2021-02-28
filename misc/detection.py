@@ -3,39 +3,18 @@ import cv2
 import torch
 import math
 from sklearn.cluster import OPTICS
+from .structure import BoundingBox, SentenceBox, CenterLine
 from .nihongo import nihongo_class
 
-class BoundingBox(object):
-    def __init__(self, x1, y1, x2, y2):
-        self.x1 = x1
-        self.y1 = y1
-        self.x2 = x2
-        self.y2 = y2
-        self.detectionscore = 0.0
-        self.sentenceindex = 0
-        self.prediction = None
-    def set_prediction(self, pred):
-        self.prediction = pred
-    def iswordbox(self):
-        return self.prediction is not None and np.argmax(self.prediction) < len(nihongo_class)
-    def isword(self):
-        return self.iswordbox() and np.argmax(self.prediction) > 0
-    def word(self):
-        r = [(a, self.prediction[a]) for a in range(len(self.prediction)) if a > 0 and a < len(nihongo_class)]
-        return sorted(r, key=lambda x:x[1])[-1]
-    def score(self):
-        _, classifiercore = self.word()
-        return 5 * self.detectionscore + classifiercore
-
 class BoundingBoxDataset(object):
-    def __init__(self, org_img, scale_wh, boundbox, output_size=(40,40)):
+    def __init__(self, org_img, scale_wh, boundbox, output_size=(56,56)):
         self.org_img = org_img
         self.scale_wh = scale_wh
         self.boundbox = boundbox
         self.output_size = output_size
     def __getitem__(self, idx):
         bb = self.boundbox[idx]
-        x1, y1, x2, y2 = bb.x1 * 4, bb.y1 * 4, bb.x2 * 4, bb.y2 * 4
+        x1, y1, x2, y2 = bb.x1 * 2, bb.y1 * 2, bb.x2 * 2, bb.y2 * 2
         x1 = int(np.round(x1 * self.scale_wh[0]))
         y1 = int(np.round(y1 * self.scale_wh[1]))
         x2 = int(np.round(x2 * self.scale_wh[0]))
@@ -45,101 +24,90 @@ class BoundingBoxDataset(object):
         x2 = min(max(0, x2), self.org_img.shape[1])
         y2 = min(max(0, y2), self.org_img.shape[0])
         im = self.org_img[y1:y2,x1:x2]
+        if im.shape[0]==0 or im.shape[1]==0:
+            im = np.zeros((1,1))
         im = cv2.resize(im, self.output_size)
         im = im.reshape((1,self.output_size[1],self.output_size[0]))
         return im.astype(np.float32) / 255.
     def __len__(self):
         return len(self.boundbox)
 
-class SentenceBox(object):
-    def __init__(self, word_threshold):
-        self.boundingboxs = []
-        self.word_threshold = word_threshold
-
-    def _conv3_filter(self, img, pos, pos_div):
-        points = []
-        rects = []
-        for y in range(1,img.shape[0]-1):
-            for x in range(1,img.shape[1]-1):
-                if img[y,x]>self.word_threshold and img[y,x]>img[y-1,x] and img[y,x]>img[y-1,x-1] and img[y,x]>img[y-1,x+1] and img[y,x]>img[y,x-1] and img[y,x]>img[y,x+1] and img[y,x]>img[y+1,x] and img[y,x]>img[y+1,x-1] and img[y,x]>img[y+1,x+1]:
-                    points.append((x,y))
-                    w, h = pos[0][y//pos_div,x//pos_div]/2, pos[1][y//pos_div,x//pos_div]/2
-                    w, h = 1+w*img.shape[1], 1+h*img.shape[0]
-                    offw, offh = int(np.round(w)), int(np.round(h))
-                    rects.append((x-offw,y-offh,x+offw,y+offh))
-        return points, rects
-
-    def make_boundingbox(self, hm_wd, hm_pos, pos_div=2, min_bound=24, resize_val=1.1, aspect_val=1.25):
-        pos, rcts = self._conv3_filter(hm_wd, hm_pos, pos_div)
-        min_bound = min_bound // 4
-        for p, r in zip(pos, rcts):
-            x1, y1, x2, y2 = r
-            x1 = min(max(0,x1), hm_wd.shape[1])
-            y1 = min(max(0,y1), hm_wd.shape[0])
-            x2 = min(max(0,x2), hm_wd.shape[1])
-            y2 = min(max(0,y2), hm_wd.shape[0])
-            w, h = x2-x1, y2-y1
-            if min(w, h) >= min_bound:
-                self.boundingboxs.append(BoundingBox(x1, y1, x2, y2))
-            w2 = int(np.round((x2-x1) * resize_val))
-            h2 = int(np.round((y2-y1) * resize_val))
-            if w2 != w and h2 != h and min(w2, h2) >= min_bound:
-                xx1 = min(max(0, p[0] - w2//2), hm_wd.shape[1])
-                yy1 = min(max(0, p[1] - h2//2), hm_wd.shape[0])
-                xx2 = min(max(0, p[0] - w2//2 + w2), hm_wd.shape[1])
-                yy2 = min(max(0, p[1] - h2//2 + h2), hm_wd.shape[0])
-                self.boundingboxs.append(BoundingBox(xx1, yy1, xx2, yy2))
-            w2 = int(np.round((x2-x1) * aspect_val))
-            h2 = int(np.round((y2-y1) / aspect_val))
-            if w2 != w and h2 != h and min(w2, h2) >= min_bound:
-                xx1 = min(max(0, p[0] - w2//2), hm_wd.shape[1])
-                yy1 = min(max(0, p[1] - h2//2), hm_wd.shape[0])
-                xx2 = min(max(0, p[0] - w2//2 + w2), hm_wd.shape[1])
-                yy2 = min(max(0, p[1] - h2//2 + h2), hm_wd.shape[0])
-                self.boundingboxs.append(BoundingBox(xx1, yy1, xx2, yy2))
-            w2 = int(np.round((x2-x1) / aspect_val))
-            h2 = int(np.round((y2-y1) * aspect_val))
-            if w2 != w and h2 != h and min(w2, h2) >= min_bound:
-                xx1 = min(max(0, p[0] - w2//2), hm_wd.shape[1])
-                yy1 = min(max(0, p[1] - h2//2), hm_wd.shape[0])
-                xx2 = min(max(0, p[0] - w2//2 + w2), hm_wd.shape[1])
-                yy2 = min(max(0, p[1] - h2//2 + h2), hm_wd.shape[0])
-                self.boundingboxs.append(BoundingBox(xx1, yy1, xx2, yy2))
-
-    def make_detectionscore(self, hm_wd_all):
-        for i in range(len(self.boundingboxs)):
-            x1, y1, x2, y2 = self.boundingboxs[i].x1, self.boundingboxs[i].y1, self.boundingboxs[i].x2, self.boundingboxs[i].y2
-            y_pred = hm_wd_all[y1:y2,x1:x2]
-            w, h = x2-x1, y2-y1
-            y_true = ((np.exp(-(((np.arange(w)-(w/2))/(w/10))**2)/2)).reshape(1,-1)
-                       *(np.exp(-(((np.arange(h)-(h/2))/(h/10))**2)/2)).reshape(-1,1))
-            self.boundingboxs[i].detectionscore = 1.0 - np.mean((y_pred-y_true)**2)
-
-    def make_sentenceid(self, id):
-        for i in range(len(self.boundingboxs)):
-            self.boundingboxs[i].sentenceindex = id
-
 class Detector(object):
-    def __init__(self, use_cuda=True, sentence_threshold=0.007, word_threshold=0.01):
+    def __init__(self, use_cuda=True, sentence_threshold=0.01, word_threshold=0.015, class_threshold=0.25, low_gpu_memory=False):
         self.use_cuda = use_cuda
         self.sentence_threshold = sentence_threshold
         self.word_threshold = word_threshold
+        self.class_threshold = class_threshold
+        self.low_gpu_memory = low_gpu_memory
 
-    def _get_class(self, im):
+    def _preprocess(self, hm_wd, hm_sent, hm_pos):
+        ln = np.clip((hm_sent*255),0,255).astype(np.uint8)
+        lines = cv2.HoughLinesP(ln, rho=2, theta=np.pi/360, threshold=80, minLineLength=30, maxLineGap=15)
+        center_ln = [] # Center line detection
+        for line in lines:
+            x1, y1, x2, y2 = line[0]
+            cl = CenterLine(hm_sent, hm_wd, hm_pos, [x1, y1], [x2, y2])
+            center_ln.append(cl)
+        lines = sorted(center_ln, key=lambda x: x.score)[::-1]
+        drops = [] # NMS for line (drop duplicate line)
+        for i in range(len(lines)):
+            if i not in drops:
+                cur = lines[i]
+                for j in range(i+1, len(lines), 1):
+                    otr = lines[j]
+                    if cur.contain(otr) and j not in drops:
+                        cur.score += otr.score
+                        drops.append(j)
+        lines = [l for i,l in enumerate(lines) if i not in drops]
+        drops = [] # NMS for line (drop cross line)
+        for i in range(len(lines)):
+            if i not in drops:
+                cur = lines[i]
+                for j in range(i+1, len(lines), 1):
+                    otr = lines[j]
+                    if cur.cross(otr) and j not in drops:
+                        drops.append(j)
+        lines = [l for i,l in enumerate(lines) if i not in drops]
+        if len(lines) <= 5: # simple image
+            all_map = []
+            for line in lines:
+                out = np.zeros(hm_sent.shape, dtype=np.uint8)
+                out = cv2.line(out, tuple(line.p1), tuple(line.p2), (255,255,255), line.maxw*2)
+                all_map.append(out)
+            return all_map, None
+        else:
+            wd_size_avg = (int(np.round(hm_pos[0][hm_pos[0]!=0].mean()*hm_pos[0].shape[1])),
+                        int(np.round(hm_pos[1][hm_pos[1]!=0].mean()*hm_pos[1].shape[0])))
+            kernel = cv2.getStructuringElement(cv2.MORPH_CROSS, wd_size_avg)
+            out = np.zeros(hm_sent.shape, dtype=np.uint8)
+            for line in lines:
+                out = cv2.line(out, tuple(line.p1), tuple(line.p2), (255,255,255), line.maxw*2)
+            flt = hm_sent.copy() * 2.5
+            flt[hm_sent>0.5] = 1
+            hm_sent_preprocessed = np.clip(flt+out/255,0,1)
+            hm_sent_preprocessed[hm_sent<=0.15] = 0
+            hm_sent_preprocessed = cv2.dilate(hm_sent_preprocessed, kernel)
+            return None, hm_sent_preprocessed
+
+    def _get_class(self, im, size=128):
         minmax = (im.min(), im.max())
         if minmax[1]-minmax[0] == 0:
-            return np.array()
+            return np.array([])
         im = (im-minmax[0]) / (minmax[1]-minmax[0])
-        clf = OPTICS(metric='euclidean', min_cluster_size=75)
+        sc = cv2.resize(im, (size,size), interpolation=cv2.INTER_NEAREST)
+        clf = OPTICS(max_eps=5, metric='euclidean', min_cluster_size=75)
         a = []
-        for x in range(im.shape[0]):
-            for y in range(im.shape[1]):
-                if im[x][y] > self.sentence_threshold:
+        for x in range(sc.shape[0]):
+            for y in range(sc.shape[1]):
+                if sc[x][y] > 0.01:
                     a.append([x,y])
         b = clf.fit_predict(a)
-        c = np.zeros(im.shape)
+        p = {v:k for k,v in enumerate(set(b))}
+        b = [p[j] for j in b]
+        c = np.zeros(sc.shape, dtype=np.int32)
         for i in range(len(b)):
             c[a[i][0],a[i][1]] = b[i]+1
+        c = cv2.resize(c, (im.shape[1], im.shape[0]), interpolation=cv2.INTER_NEAREST)
         return c
 
     def _get_map(self, clz_map):
@@ -176,7 +144,7 @@ class Detector(object):
                         else:
                             m1[an] = 0
                 maps.append(m1)
-        return np.array(maps)
+        return np.array(sorted(maps, key=lambda x:-np.sum(x)))
 
     def _scale_image(self, img, long_size):
         if img.shape[0] < img.shape[1]:
@@ -199,9 +167,9 @@ class Detector(object):
         dp.eval()
         y = dp(x)
 
-        hm_wd = ((y[0]['hm_wd'] + y[1]['hm_wd']) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_sent = ((y[0]['hm_sent'] + y[1]['hm_sent']) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_pos = ((y[0]['of_size'] + y[1]['of_size']) / 2).detach().cpu().numpy().reshape(2,64,64)
+        hm_wd = y['hm_wd'].detach().cpu().numpy().reshape(256,256)
+        hm_sent = y['hm_sent'].detach().cpu().numpy().reshape(256,256)
+        hm_pos = y['of_size'].detach().cpu().numpy().reshape(2,256,256)
         del x, y
         if self.use_cuda:
             torch.cuda.empty_cache()
@@ -216,40 +184,60 @@ class Detector(object):
         im[2,0] = tmp[0:512,512:1024]
         im[3,0] = tmp[512:1024,512:1024]
         x = np.clip(im / 255, 0.0, 1.0).astype(np.float32)
-        x = torch.tensor(x)
-        dp = torch.nn.DataParallel(detector_model)
-        if self.use_cuda:
-            x = x.cuda()
-            dp = dp.cuda()
-        dp.eval()
-        y = dp(x)
+        if (not self.low_gpu_memory) or (not self.use_cuda):
+            x = torch.tensor(x)
+            dp = torch.nn.DataParallel(detector_model)
+            if self.use_cuda:
+                x = x.cuda()
+                dp = dp.cuda()
+            dp.eval()
+            y = dp(x)
+            org_hm_wd = [y['hm_wd'][i].detach().cpu().numpy().reshape(256,256) for i in range(4)]
+            org_hm_sent = [y['hm_sent'][i].detach().cpu().numpy().reshape(256,256) for i in range(4)]
+            org_of_size = [y['of_size'][i].detach().cpu().numpy().reshape(2,256,256) / 2 for i in range(4)]
+            del x, y
+            if self.use_cuda:
+                torch.cuda.empty_cache()
+        else:
+            org_hm_wd, org_hm_sent, org_of_size = [], [], []
+            for i in range(4):
+                x = torch.tensor([x[i]])
+                dp = torch.nn.DataParallel(detector_model)
+                if self.use_cuda:
+                    x = x.cuda()
+                    dp = dp.cuda()
+                dp.eval()
+                y = dp(x)
+                org_hm_wd.append(y['hm_wd'][0].detach().cpu().numpy().reshape(256,256))
+                org_hm_sent.append(y['hm_sent'][0].detach().cpu().numpy().reshape(256,256))
+                org_of_size.append(y['of_size'][0].detach().cpu().numpy().reshape(2,256,256) / 2)
+            del x, y
+            if self.use_cuda:
+                torch.cuda.empty_cache()
 
-        hm_wd = np.zeros((256,256))
-        hm_sent = np.zeros((256,256))
-        hm_pos = np.zeros((2,128,128))
-        hm_wd[0:128,0:128] = ((y[0]['hm_wd'][0] + y[1]['hm_wd'][0]) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_wd[128:256,0:128] = ((y[0]['hm_wd'][1] + y[1]['hm_wd'][1]) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_wd[0:128,128:256] = ((y[0]['hm_wd'][2] + y[1]['hm_wd'][2]) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_wd[128:256,128:256] = ((y[0]['hm_wd'][3] + y[1]['hm_wd'][3]) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_sent[0:128,0:128] = ((y[0]['hm_sent'][0] + y[1]['hm_sent'][0]) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_sent[128:256,0:128] = ((y[0]['hm_sent'][1] + y[1]['hm_sent'][1]) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_sent[0:128,128:256] = ((y[0]['hm_sent'][2] + y[1]['hm_sent'][2]) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_sent[128:256,128:256] = ((y[0]['hm_sent'][3] + y[1]['hm_sent'][3]) / 2).detach().cpu().numpy().reshape(128,128)
-        hm_pos[:,0:64,0:64] = ((y[0]['of_size'][0] + y[1]['of_size'][0]) / 2 / 2).detach().cpu().numpy().reshape(2,64,64)
-        hm_pos[:,64:128,0:64] = ((y[0]['of_size'][1] + y[1]['of_size'][1]) / 2 / 2).detach().cpu().numpy().reshape(2,64,64)
-        hm_pos[:,0:64,64:128] = ((y[0]['of_size'][2] + y[1]['of_size'][2]) / 2 / 2).detach().cpu().numpy().reshape(2,64,64)
-        hm_pos[:,64:128,64:128] = ((y[0]['of_size'][3] + y[1]['of_size'][3]) / 2 / 2).detach().cpu().numpy().reshape(2,64,64)
-        del x, y
-        if self.use_cuda:
-            torch.cuda.empty_cache()
+        hm_wd = np.zeros((512,512))
+        hm_sent = np.zeros((512,512))
+        hm_pos = np.zeros((2,512,512))
+        hm_wd[0:256,0:256] = org_hm_wd[0]
+        hm_wd[256:512,0:256] = org_hm_wd[1]
+        hm_wd[0:256,256:512] = org_hm_wd[2]
+        hm_wd[256:512,256:512] = org_hm_wd[3]
+        hm_sent[0:256,0:256] = org_hm_sent[0]
+        hm_sent[256:512,0:256] = org_hm_sent[1]
+        hm_sent[0:256,256:512] = org_hm_sent[2]
+        hm_sent[256:512,256:512] = org_hm_sent[3]
+        hm_pos[:,0:256,0:256] = org_of_size[0]
+        hm_pos[:,256:512,0:256] = org_of_size[1]
+        hm_pos[:,0:256,256:512] = org_of_size[2]
+        hm_pos[:,256:512,256:512] = org_of_size[3]
         return hm_wd, hm_sent, hm_pos
 
     def _detect16x(self, detector_model, gray_img_scaled):
         tmp = np.zeros((2048,2048))
         tmp[0:gray_img_scaled.shape[0],0:gray_img_scaled.shape[1]] = gray_img_scaled
-        hm_wd = np.zeros((512,512))
-        hm_sent = np.zeros((512,512))
-        hm_pos = np.zeros((2,256,256))
+        hm_wd = np.zeros((1024,1024))
+        hm_sent = np.zeros((1024,1024))
+        hm_pos = np.zeros((2,1024,1024))
         dp = torch.nn.DataParallel(detector_model)
         if self.use_cuda:
             dp = dp.cuda()
@@ -261,81 +249,118 @@ class Detector(object):
             im[2,0] = tmp[512*ygrid_i:512*ygrid_i+512,1024:1536]
             im[3,0] = tmp[512*ygrid_i:512*ygrid_i+512,1536:2048]
             x = np.clip(im / 255, 0.0, 1.0).astype(np.float32)
-            x = torch.tensor(x)
-            if self.use_cuda:
-                x = x.cuda()
-            y = dp(x)
+            if (not self.low_gpu_memory) or (not self.use_cuda):
+                x = torch.tensor(x)
+                if self.use_cuda:
+                    x = x.cuda()
+                y = dp(x)
+                org_hm_wd = [y['hm_wd'][i].detach().cpu().numpy().reshape(256,256) for i in range(4)]
+                org_hm_sent = [y['hm_sent'][i].detach().cpu().numpy().reshape(256,256) for i in range(4)]
+                org_of_size = [y['of_size'][i].detach().cpu().numpy().reshape(2,256,256) / 4 for i in range(4)]
+                del x, y
+                if self.use_cuda:
+                    torch.cuda.empty_cache()
+            else:
+                org_hm_wd, org_hm_sent, org_of_size = [], [], []
+                for i in range(4):
+                    x = torch.tensor([x[i]])
+                    dp = torch.nn.DataParallel(detector_model)
+                    if self.use_cuda:
+                        x = x.cuda()
+                        dp = dp.cuda()
+                    dp.eval()
+                    y = dp(x)
+                    org_hm_wd.append(y['hm_wd'][0].detach().cpu().numpy().reshape(256,256))
+                    org_hm_sent.append(y['hm_sent'][0].detach().cpu().numpy().reshape(256,256))
+                    org_of_size.append(y['of_size'][0].detach().cpu().numpy().reshape(2,256,256) / 4)
+                del x, y
+                if self.use_cuda:
+                    torch.cuda.empty_cache()
 
-            hm_wd[128*ygrid_i:128*ygrid_i+128,0:128] = ((y[0]['hm_wd'][0] + y[1]['hm_wd'][0]) / 2).detach().cpu().numpy().reshape(128,128)
-            hm_wd[128*ygrid_i:128*ygrid_i+128,128:256] = ((y[0]['hm_wd'][1] + y[1]['hm_wd'][1]) / 2).detach().cpu().numpy().reshape(128,128)
-            hm_wd[128*ygrid_i:128*ygrid_i+128,256:384] = ((y[0]['hm_wd'][2] + y[1]['hm_wd'][2]) / 2).detach().cpu().numpy().reshape(128,128)
-            hm_wd[128*ygrid_i:128*ygrid_i+128,384:512] = ((y[0]['hm_wd'][3] + y[1]['hm_wd'][3]) / 2).detach().cpu().numpy().reshape(128,128)
-            hm_sent[128*ygrid_i:128*ygrid_i+128,0:128] = ((y[0]['hm_sent'][0] + y[1]['hm_sent'][0]) / 2).detach().cpu().numpy().reshape(128,128)
-            hm_sent[128*ygrid_i:128*ygrid_i+128,128:256] = ((y[0]['hm_sent'][1] + y[1]['hm_sent'][1]) / 2).detach().cpu().numpy().reshape(128,128)
-            hm_sent[128*ygrid_i:128*ygrid_i+128,256:384] = ((y[0]['hm_sent'][2] + y[1]['hm_sent'][2]) / 2).detach().cpu().numpy().reshape(128,128)
-            hm_sent[128*ygrid_i:128*ygrid_i+128,384:512] = ((y[0]['hm_sent'][3] + y[1]['hm_sent'][3]) / 2).detach().cpu().numpy().reshape(128,128)
-            hm_pos[:,64*ygrid_i:64*ygrid_i+64,0:64] = ((y[0]['of_size'][0] + y[1]['of_size'][0]) / 2 / 4).detach().cpu().numpy().reshape(2,64,64)
-            hm_pos[:,64*ygrid_i:64*ygrid_i+64,64:128] = ((y[0]['of_size'][1] + y[1]['of_size'][1]) / 2 / 4).detach().cpu().numpy().reshape(2,64,64)
-            hm_pos[:,64*ygrid_i:64*ygrid_i+64,128:192] = ((y[0]['of_size'][2] + y[1]['of_size'][2]) / 2 / 4).detach().cpu().numpy().reshape(2,64,64)
-            hm_pos[:,64*ygrid_i:64*ygrid_i+64,192:256] = ((y[0]['of_size'][3] + y[1]['of_size'][3]) / 2 / 4).detach().cpu().numpy().reshape(2,64,64)
-            del x, y
-            if self.use_cuda:
-                torch.cuda.empty_cache()
+            hm_wd[256*ygrid_i:256*ygrid_i+256,0:256] = org_hm_wd[0]
+            hm_wd[256*ygrid_i:256*ygrid_i+256,256:512] = org_hm_wd[1]
+            hm_wd[256*ygrid_i:256*ygrid_i+256,512:768] = org_hm_wd[2]
+            hm_wd[256*ygrid_i:256*ygrid_i+256,768:1024] = org_hm_wd[3]
+            hm_sent[256*ygrid_i:256*ygrid_i+256,0:256] = org_hm_sent[0]
+            hm_sent[256*ygrid_i:256*ygrid_i+256,256:512] = org_hm_sent[1]
+            hm_sent[256*ygrid_i:256*ygrid_i+256,512:768] = org_hm_sent[2]
+            hm_sent[256*ygrid_i:256*ygrid_i+256,768:1024] = org_hm_sent[3]
+            hm_pos[:,256*ygrid_i:256*ygrid_i+256,0:256] = org_of_size[0]
+            hm_pos[:,256*ygrid_i:256*ygrid_i+256,256:512] = org_of_size[1]
+            hm_pos[:,256*ygrid_i:256*ygrid_i+256,512:768] = org_of_size[2]
+            hm_pos[:,256*ygrid_i:256*ygrid_i+256,768:1024] = org_of_size[3]
+
         return hm_wd, hm_sent, hm_pos
 
     def _get_maps(self, detector_model, gray_img, dpi, min_word_size_cm):
-        long_size = max(gray_img.shape)
-        inch_size = long_size / dpi
-        pix_size = int(np.round(52 * (inch_size * 2.54)))
-        if pix_size <= 512:
-            detect_size = 512
-        elif pix_size <= 1024:
-            detect_size = 1024
+        if dpi == 0:
+            img_size = max(gray_img.shape)
+            if img_size <= 512:
+                detect_size = 512
+            elif img_size <= 1024:
+                detect_size = 1024
+            else:
+                detect_size = 2048
+            div_size = min(img_size, 2048)
         else:
-            detect_size = 2048
+            long_size = max(gray_img.shape)
+            inch_size = long_size / dpi
+            pix_size = int(np.round(52 * (inch_size * 2.54)))
+            if pix_size <= 512:
+                detect_size = 512
+            elif pix_size <= 1024:
+                detect_size = 1024
+            else:
+                detect_size = 2048
+            div_size = min(pix_size,detect_size)
 
-        div_size = min(pix_size,detect_size)
         pix_image = self._scale_image(gray_img, div_size)
         gray_img_scaled = np.zeros((detect_size, detect_size), dtype=np.uint8)
         gray_img_scaled[0:pix_image.shape[0],0:pix_image.shape[1]] = pix_image
         scale_image = (gray_img.shape[1]/pix_image.shape[1], gray_img.shape[0]/pix_image.shape[0])
 
-        if detect_size == 512:
-            hm_wd, hm_sent, hm_pos = self._detect1x(detector_model, gray_img_scaled)
-        elif detect_size == 1024:
-            hm_wd, hm_sent, hm_pos = self._detect4x(detector_model, gray_img_scaled)
-        elif detect_size == 2048:
-            hm_wd, hm_sent, hm_pos = self._detect16x(detector_model, gray_img_scaled)
+        with torch.no_grad():
+            if detect_size == 512:
+                hm_wd, hm_sent, hm_pos = self._detect1x(detector_model, gray_img_scaled)
+            elif detect_size == 1024:
+                hm_wd, hm_sent, hm_pos = self._detect4x(detector_model, gray_img_scaled)
+            elif detect_size == 2048:
+                hm_wd, hm_sent, hm_pos = self._detect16x(detector_model, gray_img_scaled)
+
+        hm_wd[np.mean(hm_pos, axis=0) < 0.01] = 0
+        hm_sent[np.mean(hm_pos, axis=0) < 0.01] = 0
         return pix_image, scale_image, hm_wd, hm_sent, hm_pos
 
     def _find_best_dpi(self, detector_model, gray_img, dpi, min_word_size_cm):
+        tests = []
         for testdpi in (72,100,150,200,300):
             res = self._get_maps(detector_model, gray_img, testdpi, min_word_size_cm)
-            if np.max(res[3]) > 0.5:
-                return testdpi, res
-        return 300, res
+            tests.append((testdpi, np.sum(res[3] > 0.01) / (res[3].shape[0]*res[3].shape[1]), res))
+        result = sorted(tests, key=lambda x:x[1])[-1]
+        return result[0], result[2]
 
     def detect_image(self, detector_model, gray_img, dpi=72, min_word_size_cm=0.5):
         min_bound = int(np.round(min_word_size_cm * dpi / 2.54))
 
-        if dpi > 0:
+        if dpi >= 0:
             pix_image, scale_image, hm_wd, hm_sent, hm_pos = self._get_maps(detector_model, gray_img, dpi, min_word_size_cm)
         else:
             dpi, (pix_image, scale_image, hm_wd, hm_sent, hm_pos) = self._find_best_dpi(detector_model, gray_img, dpi, min_word_size_cm)
 
-        class_map = self._get_class(hm_sent)
-        all_map = self._get_map(class_map)
-        all_map = self._filt_map(all_map)
+        all_map, hm_sent_preprocessed = self._preprocess(hm_wd, hm_sent, hm_pos)
+        if hm_sent_preprocessed is not None:
+            class_map = self._get_class(hm_sent_preprocessed)
+            all_map = self._get_map(class_map)
+            all_map = self._filt_map(all_map)
 
         sent_box = []
 
-        pos_div = 2 if detector_model.use_offset_pooling else 1
         for i, now_map in enumerate(all_map):
             clz_wd = hm_wd.copy()
             clz_wd[now_map == 0] = 0
             clz_wd = (clz_wd - np.min(clz_wd)) / (np.max(clz_wd) - np.min(clz_wd))
             sbox = SentenceBox(self.word_threshold)
-            sbox.make_boundingbox(clz_wd, hm_pos, pos_div, min_bound)
+            sbox.make_boundingbox(clz_wd, hm_pos, min_bound)
             if len(sbox.boundingboxs) > 0:
                 sent_box.append(sbox)
 
@@ -344,27 +369,31 @@ class Detector(object):
     def _bounding_box(self, classifier_model, gray_img, scale_image, boundings, batch_size_classifier, num_workers):
         dataset = BoundingBoxDataset(gray_img, scale_image, boundings)
         loader = torch.utils.data.DataLoader(dataset, batch_size=batch_size_classifier, shuffle=False, num_workers=num_workers)
-        dp = torch.nn.DataParallel(classifier_model)
-        if self.use_cuda:
-            dp = dp.cuda()
-        dp.eval()
-
-        num_pred = 0
-        for x in loader:
+        with torch.no_grad():
+            dp = torch.nn.DataParallel(classifier_model)
             if self.use_cuda:
-                x = x.cuda()
-            val = dp(x)
-            val = torch.nn.functional.softmax(val, dim=1)
-            val = val.detach().cpu().numpy()
-            for v in val:
-                boundings[num_pred].set_prediction(v)
-                num_pred += 1
-            del x
-        del dp
-        if self.use_cuda:
-            torch.cuda.empty_cache()
+                dp = dp.cuda()
+            dp.eval()
 
-    def bounding_box(self, classifier_model, detection, batch_size_classifier=32, num_workers=2, repeat_box=1):
+            num_pred = 0
+            for x in loader:
+                if self.use_cuda:
+                    x = x.cuda()
+                val = dp(x)
+                val = torch.nn.functional.softmax(val, dim=1)
+                val = val.detach().cpu().numpy()
+                for v in val:
+                    boundings[num_pred].set_prediction(v.copy())
+                    num_pred += 1
+                del x
+            del dp
+            if self.use_cuda:
+                torch.cuda.empty_cache()
+
+    def bounding_box(self, classifier_model, detection, batch_size_classifier=64, num_workers=2, repeat_box=1):
+        if self.low_gpu_memory:
+            batch_size_classifier = batch_size_classifier//8
+
         dpi, sent_box, gray_img, scale_image, hm_wd = detection
 
         for i, sbox in enumerate(sent_box):
@@ -414,4 +443,5 @@ class Detector(object):
 
             all_bounding = all_bounding + sbox.boundingboxs
 
+        all_bounding = [b for b in all_bounding if b.classifiercore() > self.class_threshold]
         return all_bounding
