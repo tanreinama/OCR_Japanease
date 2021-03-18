@@ -211,9 +211,10 @@ class Detector(object):
                 org_hm_wd.append(y['hm_wd'][0].detach().cpu().numpy().reshape(256,256))
                 org_hm_sent.append(y['hm_sent'][0].detach().cpu().numpy().reshape(256,256))
                 org_of_size.append(y['of_size'][0].detach().cpu().numpy().reshape(2,256,256) / 2)
-            del x, _x, y
-            if self.use_cuda:
-                torch.cuda.empty_cache()
+                del _x, y
+                if self.use_cuda:
+                    torch.cuda.empty_cache()
+            del x
 
         hm_wd = np.zeros((512,512))
         hm_sent = np.zeros((512,512))
@@ -273,9 +274,10 @@ class Detector(object):
                     org_hm_wd.append(y['hm_wd'][0].detach().cpu().numpy().reshape(256,256))
                     org_hm_sent.append(y['hm_sent'][0].detach().cpu().numpy().reshape(256,256))
                     org_of_size.append(y['of_size'][0].detach().cpu().numpy().reshape(2,256,256) / 4)
-                del x, _x, y
-                if self.use_cuda:
-                    torch.cuda.empty_cache()
+                    del _x, y
+                    if self.use_cuda:
+                        torch.cuda.empty_cache()
+                del x
 
             hm_wd[256*ygrid_i:256*ygrid_i+256,0:256] = org_hm_wd[0]
             hm_wd[256*ygrid_i:256*ygrid_i+256,256:512] = org_hm_wd[1]
