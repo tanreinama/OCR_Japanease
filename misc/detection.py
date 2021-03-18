@@ -201,17 +201,17 @@ class Detector(object):
         else:
             org_hm_wd, org_hm_sent, org_of_size = [], [], []
             for i in range(4):
-                x = torch.tensor([x[i]])
+                _x = torch.tensor([x[i]])
                 dp = torch.nn.DataParallel(detector_model)
                 if self.use_cuda:
-                    x = x.cuda()
+                    _x = _x.cuda()
                     dp = dp.cuda()
                 dp.eval()
-                y = dp(x)
+                y = dp(_x)
                 org_hm_wd.append(y['hm_wd'][0].detach().cpu().numpy().reshape(256,256))
                 org_hm_sent.append(y['hm_sent'][0].detach().cpu().numpy().reshape(256,256))
                 org_of_size.append(y['of_size'][0].detach().cpu().numpy().reshape(2,256,256) / 2)
-            del x, y
+            del x, _x, y
             if self.use_cuda:
                 torch.cuda.empty_cache()
 
@@ -263,17 +263,17 @@ class Detector(object):
             else:
                 org_hm_wd, org_hm_sent, org_of_size = [], [], []
                 for i in range(4):
-                    x = torch.tensor([x[i]])
+                    _x = torch.tensor([x[i]])
                     dp = torch.nn.DataParallel(detector_model)
                     if self.use_cuda:
-                        x = x.cuda()
+                        _x = _x.cuda()
                         dp = dp.cuda()
                     dp.eval()
-                    y = dp(x)
+                    y = dp(_x)
                     org_hm_wd.append(y['hm_wd'][0].detach().cpu().numpy().reshape(256,256))
                     org_hm_sent.append(y['hm_sent'][0].detach().cpu().numpy().reshape(256,256))
                     org_of_size.append(y['of_size'][0].detach().cpu().numpy().reshape(2,256,256) / 4)
-                del x, y
+                del x, _x, y
                 if self.use_cuda:
                     torch.cuda.empty_cache()
 
