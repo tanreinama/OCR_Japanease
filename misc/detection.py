@@ -40,7 +40,7 @@ class Detector(object):
         self.class_threshold = class_threshold
         self.low_gpu_memory = low_gpu_memory
 
-    def _preprocess(self, hm_wd, hm_sent, hm_pos):
+    def _preprocess(self, hm_wd, hm_sent, hm_pos, simple_mode_lines=5, hm_dup=2.5, high_threshold=0.5, low_threshold=0.15):
         ln = np.clip((hm_sent*255),0,255).astype(np.uint8)
         lines = cv2.HoughLinesP(ln, rho=2, theta=np.pi/360, threshold=80, minLineLength=30, maxLineGap=15)
         center_ln = [] # Center line detection
@@ -68,7 +68,7 @@ class Detector(object):
                     if cur.cross(otr) and j not in drops:
                         drops.append(j)
         lines = [l for i,l in enumerate(lines) if i not in drops]
-        if len(lines) <= 5: # simple image
+        if len(lines) <= simple_mode_lines: # simple image
             all_map = []
             for line in lines:
                 out = np.zeros(hm_sent.shape, dtype=np.uint8)
@@ -82,10 +82,10 @@ class Detector(object):
             out = np.zeros(hm_sent.shape, dtype=np.uint8)
             for line in lines:
                 out = cv2.line(out, tuple(line.p1), tuple(line.p2), (255,255,255), line.maxw*2)
-            flt = hm_sent.copy() * 2.5
-            flt[hm_sent>0.5] = 1
+            flt = hm_sent.copy() * hm_dup
+            flt[hm_sent>high_threshold] = 1
             hm_sent_preprocessed = np.clip(flt+out/255,0,1)
-            hm_sent_preprocessed[hm_sent<=0.15] = 0
+            hm_sent_preprocessed[hm_sent<=low_threshold] = 0
             hm_sent_preprocessed = cv2.dilate(hm_sent_preprocessed, kernel)
             return None, hm_sent_preprocessed
 
@@ -201,19 +201,20 @@ class Detector(object):
         else:
             org_hm_wd, org_hm_sent, org_of_size = [], [], []
             for i in range(4):
-                x = torch.tensor([x[i]])
+                _x = torch.tensor([x[i]])
                 dp = torch.nn.DataParallel(detector_model)
                 if self.use_cuda:
-                    x = x.cuda()
+                    _x = _x.cuda()
                     dp = dp.cuda()
                 dp.eval()
-                y = dp(x)
+                y = dp(_x)
                 org_hm_wd.append(y['hm_wd'][0].detach().cpu().numpy().reshape(256,256))
                 org_hm_sent.append(y['hm_sent'][0].detach().cpu().numpy().reshape(256,256))
                 org_of_size.append(y['of_size'][0].detach().cpu().numpy().reshape(2,256,256) / 2)
-            del x, y
-            if self.use_cuda:
-                torch.cuda.empty_cache()
+                del _x, y
+                if self.use_cuda:
+                    torch.cuda.empty_cache()
+            del x
 
         hm_wd = np.zeros((512,512))
         hm_sent = np.zeros((512,512))
@@ -263,19 +264,20 @@ class Detector(object):
             else:
                 org_hm_wd, org_hm_sent, org_of_size = [], [], []
                 for i in range(4):
-                    x = torch.tensor([x[i]])
+                    _x = torch.tensor([x[i]])
                     dp = torch.nn.DataParallel(detector_model)
                     if self.use_cuda:
-                        x = x.cuda()
+                        _x = _x.cuda()
                         dp = dp.cuda()
                     dp.eval()
-                    y = dp(x)
+                    y = dp(_x)
                     org_hm_wd.append(y['hm_wd'][0].detach().cpu().numpy().reshape(256,256))
                     org_hm_sent.append(y['hm_sent'][0].detach().cpu().numpy().reshape(256,256))
                     org_of_size.append(y['of_size'][0].detach().cpu().numpy().reshape(2,256,256) / 4)
-                del x, y
-                if self.use_cuda:
-                    torch.cuda.empty_cache()
+                    del _x, y
+                    if self.use_cuda:
+                        torch.cuda.empty_cache()
+                del x
 
             hm_wd[256*ygrid_i:256*ygrid_i+256,0:256] = org_hm_wd[0]
             hm_wd[256*ygrid_i:256*ygrid_i+256,256:512] = org_hm_wd[1]
