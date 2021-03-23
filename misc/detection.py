@@ -160,8 +160,9 @@ class Detector(object):
         im[0,0,0:gray_img_scaled.shape[0],0:gray_img_scaled.shape[1]] = gray_img_scaled
         x = np.clip(im / 255, 0.0, 1.0).astype(np.float32)
         x = torch.tensor(x)
-        dp = torch.nn.DataParallel(detector_model)
+        dp = detector_model
         if self.use_cuda:
+            dp = torch.nn.DataParallel(detector_model)
             x = x.cuda()
             dp = dp.cuda()
         dp.eval()
@@ -186,8 +187,9 @@ class Detector(object):
         x = np.clip(im / 255, 0.0, 1.0).astype(np.float32)
         if (not self.low_gpu_memory) or (not self.use_cuda):
             x = torch.tensor(x)
-            dp = torch.nn.DataParallel(detector_model)
+            dp = detector_model
             if self.use_cuda:
+                dp = torch.nn.DataParallel(detector_model)
                 x = x.cuda()
                 dp = dp.cuda()
             dp.eval()
@@ -202,8 +204,9 @@ class Detector(object):
             org_hm_wd, org_hm_sent, org_of_size = [], [], []
             for i in range(4):
                 _x = torch.tensor([x[i]])
-                dp = torch.nn.DataParallel(detector_model)
+                dp = detector_model
                 if self.use_cuda:
+                    dp = torch.nn.DataParallel(detector_model)
                     _x = _x.cuda()
                     dp = dp.cuda()
                 dp.eval()
@@ -239,8 +242,9 @@ class Detector(object):
         hm_wd = np.zeros((1024,1024))
         hm_sent = np.zeros((1024,1024))
         hm_pos = np.zeros((2,1024,1024))
-        dp = torch.nn.DataParallel(detector_model)
+        dp = detector_model
         if self.use_cuda:
+            dp = torch.nn.DataParallel(detector_model)
             dp = dp.cuda()
         dp.eval()
         for ygrid_i in range(4):
