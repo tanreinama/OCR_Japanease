@@ -33,9 +33,8 @@ class BoundingBoxDataset(object):
         return len(self.boundbox)
 
 class Detector(object):
-    def __init__(self, use_cuda=True, sentence_threshold=0.01, word_threshold=0.015, class_threshold=0.25, low_gpu_memory=False):
+    def __init__(self, use_cuda=True, word_threshold=0.01, class_threshold=0.25, low_gpu_memory=False):
         self.use_cuda = use_cuda
-        self.sentence_threshold = sentence_threshold
         self.word_threshold = word_threshold
         self.class_threshold = class_threshold
         self.low_gpu_memory = low_gpu_memory

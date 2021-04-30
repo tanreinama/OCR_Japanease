@@ -72,7 +72,7 @@ def get_ocr(filelist,dpi,use_cuda=True,output_detect_img=False,low_gpu_memory=Fa
         model.load_state_dict(torch.load(det_model))
     else:
         model.load_state_dict(torch.load(det_model, map_location=torch.device('cpu')))
-    dt = Detector(use_cuda=use_cuda, sentence_threshold=0.007, word_threshold=0.01, low_gpu_memory=low_gpu_memory)
+    dt = Detector(use_cuda=use_cuda, low_gpu_memory=low_gpu_memory)
     detections = []
     for file in filelist:
         im = cv2.imread(file)
