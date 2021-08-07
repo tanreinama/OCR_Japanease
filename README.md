@@ -66,6 +66,7 @@ $ unzip ocr_jp-v2.zip
 ocr_japanease.py がメインプログラムです。ファイル名（複数可）またはディレクトリ名（複数可）を指定します。ディレクトリ名を指定する場合、その中には画像ファイルのみが含まれていなければなりません。
 
 ```sh
+$ python3 -m pip install -r requirements.txt
 $ python3 ocr_japanease.py testshot1.png
 file "testshot1.png" detected in 72 dpi
 [Block #0]
