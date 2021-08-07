@@ -1,3 +1,5 @@
+import string
+
 hiragana = \
     ['あ', 'い', 'う', 'え', 'お', 'か', 'き', 'く', 'け', 'こ', 'さ', 'し', 'す', 'せ', 'そ',
      'た', 'ち', 'つ', 'て', 'と', 'な', 'に', 'ぬ', 'ね', 'の', 'は', 'ひ', 'ふ', 'へ', 'ほ',
@@ -12,17 +14,13 @@ katakana = \
      'ザ', 'ジ', 'ズ', 'ゼ', 'ゾ', 'ダ', 'ヂ', 'ヅ', 'デ', 'ド', 'バ', 'ビ', 'ブ', 'ベ', 'ボ',
      'パ', 'ピ', 'プ', 'ペ', 'ポ', 'ヤ', 'ユ', 'ヨ', 'ワ', 'ヲ', 'ン', 'ー']
 
-alphabet_upper = \
-    ['A', 'B', 'C', 'D', 'E', 'F', 'G', 'H', 'I', 'J', 'K', 'L', 'M', 'N', 'O',
-     'P', 'Q', 'R', 'S', 'T', 'U', 'V', 'W', 'X', 'Y', 'Z']
+alphabet_upper = list(string.ascii_uppercase)
 
-alphabet_lower = \
-    ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h', 'i', 'j', 'k', 'l', 'm', 'n', 'o',
-     'p', 'q', 'r', 's', 't', 'u', 'v', 'w', 'x', 'y', 'z']
+alphabet_lower = list(string.ascii_lowercase)
 
-numetric = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9']
+numetric = list(string.digits)
 
-alphabet_num = alphabet_upper + alphabet_lower + numetric
+alphabet_num = list(string.ascii_letters + string.digits)
 
 kigou = \
     ['(', ')', '[', ']', '「', '」', '『', '』', '<', '>', '¥', '/', '÷', '*', '+',
