@@ -1,3 +1,4 @@
-torch >= 1.2.0
 numpy
+opencv-python
+torch>=1.2.0
 sklearn
